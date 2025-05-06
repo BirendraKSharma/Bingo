@@ -12,6 +12,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+@app.get("/")
+async def health_check():
+    return {"status": "OK", "message": "Bingo WebSocket server is running"}
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
