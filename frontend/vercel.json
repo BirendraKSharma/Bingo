@@ -3,14 +3,13 @@
     "builds": [
       {
         "src": "frontend/package.json",
-        "use": "@vercel/static-build",
-        "config": {
-          "distDir": "dist",
-          "buildCommand": "npm install --platform=linux --arch=x64 && npm run build"
-        }
+        "use": "@vercel/node"
       }
     ],
     "routes": [
-      { "src": "/(.*)", "dest": "frontend/dist/$1" }
+      { "handle": "filesystem" },
+      { "src": "/api/(.*)", "dest": "frontend/api/$1" },
+      { "src": "/(.*)", "dest": "frontend/$1" }
     ]
   }
+
