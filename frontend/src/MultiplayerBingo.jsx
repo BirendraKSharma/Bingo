@@ -15,7 +15,8 @@ export default function App() {
     React.useEffect(() => {
         if (!playerName) return;
 
-        socket.current = new WebSocket("ws://localhost:8000/ws");
+        const socket = new WebSocket(import.meta.env.VITE_WS_URL);
+
 
         socket.current.onopen = () => {
             socket.current.send(JSON.stringify({
