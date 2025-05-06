@@ -1,0 +1,7 @@
+{
+    "rewrites": [
+      { "source": "/(.*)", "destination": "/index.html" }
+    ],
+    "buildCommand": "cd frontend && npm config set platform=linux && npm config set arch=x64 && npm install --no-optional && npm run build",
+    "outputDirectory": "frontend/dist"
+  }
