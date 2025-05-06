@@ -1,0 +1,16 @@
+{
+    "version": 2,
+    "builds": [
+      {
+        "src": "frontend/package.json",
+        "use": "@vercel/static-build",
+        "config": {
+          "distDir": "dist",
+          "buildCommand": "npm install --platform=linux --arch=x64 && npm run build"
+        }
+      }
+    ],
+    "routes": [
+      { "src": "/(.*)", "dest": "frontend/dist/$1" }
+    ]
+  }
