@@ -15,8 +15,7 @@ export default function App() {
     React.useEffect(() => {
         if (!playerName) return;
 
-        const socket = new WebSocket(import.meta.env.VITE_WS_URL);
-
+        socket.current = new WebSocket("ws://localhost:5173/ws"); // your Vite dev server
 
         socket.current.onopen = () => {
             socket.current.send(JSON.stringify({
