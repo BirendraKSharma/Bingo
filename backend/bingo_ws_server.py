@@ -12,6 +12,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 @app.get("/")
 async def health_check():
     return {"status": "OK", "message": "Bingo WebSocket server is running"}
@@ -31,28 +32,61 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"{data['name']} joined the game.")
 
             elif data["type"] == "mark_number":
+                # Use a list of active clients to prevent sending to closed connections
+                active_clients = []
                 for client in clients:
-                    await client.send_json({
-                        "type": "mark_number",
-                        "number": data["number"],
-                        "marked_by": clients[websocket]
-                    })
+                    try:
+                        await client.send_json({
+                            "type": "mark_number",
+                            "number": data["number"],
+                            "marked_by": clients[websocket]
+                        })
+                        active_clients.append(client)
+                    except RuntimeError:
+                        # This client connection is closed
+                        print(f"Removed closed client connection: {clients.get(client, 'Unknown')}")
+                        pass
+                
+                # Update clients dictionary to only include active connections
+                clients = {client: clients[client] for client in active_clients}
 
             elif data["type"] == "winner":
                 winner = clients[websocket]
                 print(f"{winner} has won the game!")
-                for client in clients:
-                    await client.send_json({
-                        "type": "winner",
-                        "winner": winner
-                    })
+                
+                # Again, handle closed connections
+                active_clients = []
+                for client in list(clients.keys()):
+                    try:
+                        await client.send_json({
+                            "type": "winner",
+                            "winner": winner
+                        })
+                        active_clients.append(client)
+                    except RuntimeError:
+                        # This client connection is closed
+                        pass
+                
+                # Update clients dictionary to only include active connections
+                clients = {client: clients[client] for client in active_clients}
 
             elif data["type"] == "reset":
-                for client in clients:
-                    await client.send_json({ "type": "reset" })
+                active_clients = []
+                for client in list(clients.keys()):
+                    try:
+                        await client.send_json({ "type": "reset" })
+                        active_clients.append(client)
+                    except RuntimeError:
+                        # This client connection is closed
+                        pass
+                
+                # Update clients dictionary to only include active connections
+                clients = {client: clients[client] for client in active_clients}
 
     except WebSocketDisconnect:
-        clients.pop(websocket, None)
+        # Client disconnected
+        name = clients.pop(websocket, "Unknown")
+        print(f"{name} disconnected.")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
