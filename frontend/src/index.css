@@ -136,3 +136,32 @@ button.random-fill {
 .start-button:active {
   transform: scale(0.98);
 }
+
+/* Add this to your CSS file */
+.connection-status {
+  margin-top: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+
+.connection-status.connecting {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.connection-status.connected {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.connection-status.disconnected {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.connection-status.error {
+  background-color: #f8d7da;
+  color: #721c24;
+}

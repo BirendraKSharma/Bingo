@@ -9,50 +9,85 @@ export default function App() {
     const [hasHeld, setHasHeld] = React.useState(false);
     const [playerName, setPlayerName] = React.useState("");
     const [inputName, setInputName] = React.useState("");
-    const [winnerName, setWinnerName] = React.useState(null); // <- NEW
+    const [winnerName, setWinnerName] = React.useState(null);
+    const [connectionStatus, setConnectionStatus] = React.useState("disconnected");
+    const [retryCount, setRetryCount] = React.useState(0);
+    const maxRetries = 3;
     const isWinner = winnerName === playerName;
 
     React.useEffect(() => {
         if (!playerName) return;
+        
+        let reconnectTimeout = null;
+        
+        const connectWebSocket = () => {
+            setConnectionStatus("connecting");
+            console.log(`Connection attempt ${retryCount + 1} of ${maxRetries}`);
+            
+            socket.current = new WebSocket(import.meta.env.VITE_WS_URL);
+            
+            socket.current.onopen = () => {
+                console.log("Connected to server successfully");
+                setConnectionStatus("connected");
+                setRetryCount(0); // Reset retry count on successful connection
+                
+                // Send join message
+                socket.current.send(JSON.stringify({
+                    type: "join",
+                    name: playerName
+                }));
+            };
+            
+            socket.current.onerror = (error) => {
+                console.error("WebSocket error:", error);
+                setConnectionStatus("error");
+            };
+            
+            socket.current.onclose = () => {
+                console.log("Disconnected from server");
+                setConnectionStatus("disconnected");
+                
+                // Try to reconnect if we haven't reached max retries
+                if (retryCount < maxRetries) {
+                    setRetryCount(prev => prev + 1);
+                    reconnectTimeout = setTimeout(connectWebSocket, 3000); // Wait 3 seconds before retry
+                }
+            };
+            
+            socket.current.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                console.log("Received message:", data);
 
-        socket.current = new WebSocket("ws://localhost:5173/ws"); // your Vite dev server
+                if (data.type === "mark_number") {
+                    setCard(prev =>
+                        prev.map(cell =>
+                            cell.value === data.number ? { ...cell, isHeld: true } : cell
+                        )
+                    );
+                }
 
-        socket.current.onopen = () => {
-            socket.current.send(JSON.stringify({
-                type: "join",
-                name: playerName
-            }));
+                if (data.type === "winner") {
+                    setWinnerName(data.winner);
+                    alert(`${data.winner} has won the game!`);
+                }
+
+                if (data.type === "reset") {
+                    setCard(generateAllNewCard());
+                    setHasHeld(false);
+                    setWinnerName(null);
+                }
+            };
         };
-
-        socket.current.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-
-            if (data.type === "mark_number") {
-                setCard(prev =>
-                    prev.map(cell =>
-                        cell.value === data.number ? { ...cell, isHeld: true } : cell
-                    )
-                );
-            }
-
-            if (data.type === "winner") {
-                setWinnerName(data.winner);
-                alert(`${data.winner} has won the game!`);
-            }
-
-            if (data.type === "reset") {
-                setCard(generateAllNewCard());
-                setHasHeld(false);
-                setWinnerName(null);
+        
+        connectWebSocket();
+        
+        return () => {
+            clearTimeout(reconnectTimeout);
+            if (socket.current) {
+                socket.current.close();
             }
         };
-
-        socket.current.onclose = () => {
-            console.log("Disconnected from server");
-        };
-
-        return () => socket.current?.close();
-    }, [playerName]);
+    }, [playerName, retryCount]);
 
     function generateAllNewCard() {
         let numbers = Array.from({ length: 25 }, (_, i) => i + 1);
@@ -77,16 +112,27 @@ export default function App() {
         );
         setCard(updatedCard);
 
-        socket.current.send(JSON.stringify({
-            type: "mark_number",
-            number: selected.value
-        }));
+        // Check if socket is open before sending
+        if (socket.current?.readyState === 1) { // WebSocket.OPEN
+            try {
+                socket.current.send(JSON.stringify({
+                    type: "mark_number",
+                    number: selected.value
+                }));
 
-        if (checkTotalBingos(updatedCard)) {
-            socket.current.send(JSON.stringify({
-                type: "winner"
-            }));
-            setWinnerName(playerName); // Immediate feedback
+                if (checkTotalBingos(updatedCard)) {
+                    socket.current.send(JSON.stringify({
+                        type: "winner"
+                    }));
+                    setWinnerName(playerName); // Immediate feedback
+                }
+            } catch (error) {
+                console.error("Error sending WebSocket message:", error);
+                setConnectionStatus("error");
+            }
+        } else {
+            console.error("WebSocket is not connected");
+            setConnectionStatus("disconnected");
         }
     }
 
@@ -115,10 +161,32 @@ export default function App() {
         setHasHeld(false);
         setWinnerName(null);
 
-        if (socket.current?.readyState === 1) {
-            socket.current.send(JSON.stringify({ type: "reset" }));
+        if (socket.current?.readyState === 1) { // WebSocket.OPEN
+            try {
+                socket.current.send(JSON.stringify({ type: "reset" }));
+            } catch (error) {
+                console.error("Error sending reset message:", error);
+                setConnectionStatus("error");
+            }
+        } else {
+            console.log("WebSocket not connected, only resetting local state");
         }
     }
+
+    const connectionStatusUI = () => {
+        switch(connectionStatus) {
+            case "connecting":
+                return <p className="connection-status connecting">Connecting to server...</p>;
+            case "connected":
+                return <p className="connection-status connected">Connected to server</p>;
+            case "disconnected":
+                return <p className="connection-status disconnected">Disconnected from server</p>;
+            case "error":
+                return <p className="connection-status error">Connection error. Please try again later.</p>;
+            default:
+                return null;
+        }
+    };
 
     const cardElements = card.map(cell => (
         <Bingo
@@ -168,6 +236,7 @@ export default function App() {
             <h1 className="title">Bingo</h1>
             <h2 className="instructions">Click on the numbers to hold them. Get 5 in a row to win!</h2>
             <h3 className="player-name">Player: {playerName}</h3>
+            {connectionStatusUI()}
             {winnerName && <h4 className="winner-text">🏆 {winnerName} has won the game!</h4>}
 
             <div className='bingo-card'>
