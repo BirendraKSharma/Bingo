@@ -16,7 +16,7 @@ Backend: FastAPI + WebSockets (per-room state, players, numbers, winners)
 - Automatic cleanup: empty rooms are deleted when last player disconnects.
 - Client reconnection with exponential backoff and state re-sync.
 - Per-tab persistence of player name and last room (via `sessionStorage`). Opening a new tab now prompts for a new identity.
-- Deterministic per-player board generation using a seed derived from `room_id + player_id + round` (so reconnects preserve layout & progress alignment with drawn numbers).
+- Turn-based play: only the active player (server-enforced) may select the next number; turns rotate in join order.
 
 ## Backend (FastAPI) Overview
 
@@ -30,9 +30,6 @@ rooms = {
 		"player_names": { player_name: websocket },
 		"numbers_drawn": set(),
 		"winner": None | str
-		"round": int,                # increments on each reset
-		"player_ids": { websocket: player_id },
-		"id_to_name": { player_id: player_name }
 	}
 }
 ```
@@ -41,13 +38,15 @@ WebSocket messages (per room):
 
 | Type | Direction | Payload | Description |
 |------|-----------|---------|-------------|
-| `join` | client→server | `{ name, player_id? }` | Registers or re-associates player, returns state |
-| `state` | server→client | `{ players, numbers_drawn, winner, round, player_id }` | Authoritative snapshot |
+| `join` | client→server | `{ name }` | Registers player, returns state |
+| `state` | server→client | full snapshot | Sent to newly joined client |
 | `player_joined` | server→room | `{ player, players }` | New player broadcast |
 | `player_left` | server→room | `{ player, players }` | Player left broadcast |
-| `mark_number` | both | `{ number, marked_by }` | Number marked in room |
+| `mark_number` | both | `{ number, marked_by }` | Number marked in room (validated turn) |
 | `winner` | server→room | `{ winner }` | Winner announced (first only) |
-| `reset` | server→room | `{ round }` | Clears numbers + winner, increments round |
+| `reset` | server→room | `{}` | Clears numbers + winner |
+| `next_turn` | server→room | `{ current_player, turn_order }` | Announces whose turn is next |
+| `invalid_move` | server→client | `{ reason, current_player }` | Sent when a player acts out of turn or repeats number |
 | `heartbeat` / `heartbeat_ack` | optional | – | Keep-alive (not yet scheduled) |
 
 > NOTE: State lives in memory; for production scale, migrate to a shared store (Redis) and add proper room lifecycle & authentication.
@@ -134,8 +133,6 @@ location /rooms { proxy_pass http://backend:8000/rooms; }
 - Implement server-side win validation instead of trusting client.
 - Add spectator mode and chat per room.
 - Add rate limiting / flood protection.
-- Salted seed or server-generated boards for anti-cheat (e.g. include secret per room).
-- Store per-player boards server-side for authoritative validation.
 
 ## Troubleshooting
 | Issue | Check |

@@ -5,7 +5,6 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import random
 import string
-import uuid
 from typing import Dict, List, Any
 
 app = FastAPI()
@@ -19,10 +18,7 @@ app = FastAPI()
 #       "players": { websocket: player_name, ... },
 #       "player_names": { player_name: websocket },  # reverse lookup convenience
 #       "numbers_drawn": set[int],
-#       "winner": str | None,
-#       "round": int,
-#       "player_ids": { websocket: player_id },
-#       "id_to_name": { player_id: player_name }
+#       "winner": str | None
 #   }
 # }
 rooms: Dict[str, Dict[str, Any]] = {}
@@ -51,13 +47,14 @@ async def health_check():
 async def create_room():
     room_id = generate_room_code()
     rooms[room_id] = {
-        "players": {},            # websocket -> player_name
-        "player_names": {},       # player_name -> websocket
+        "players": {},
+        "player_names": {},
         "numbers_drawn": set(),
         "winner": None,
-        "round": 1,
-        "player_ids": {},         # websocket -> player_id
-        "id_to_name": {}          # player_id -> player_name
+        # Turn-based additions
+        "turn_order": [],        # list[str]
+        "turn_index": 0,         # int pointer into turn_order
+        "phase": "waiting"       # waiting | active | finished
     }
     return {"room_id": room_id}
 
@@ -70,8 +67,7 @@ async def get_room_state(room_id: str):
         "room_id": room_id,
         "players": list(room["player_names"].keys()),
         "numbers_drawn": list(room["numbers_drawn"]),
-        "winner": room["winner"],
-        "round": room["round"]
+        "winner": room["winner"]
     }
 
 @app.websocket("/ws/{room_id}")
@@ -84,8 +80,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
 
     room = rooms[room_id]
     room["players"][websocket] = "Unknown"
-    # provisional placeholder player_id until join
-    room["player_ids"][websocket] = str(uuid.uuid4())
 
     try:
         while True:
@@ -94,69 +88,121 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
 
             if msg_type == "join":
                 player_name = data.get("name", "Unknown")
-                existing_player_id = data.get("player_id")
-                # If client supplies a player_id and we can map it, attempt to reuse name
-                if existing_player_id and existing_player_id in room.get("id_to_name", {}):
-                    # Re-associate websocket with existing identity
-                    mapped_name = room["id_to_name"][existing_player_id]
-                    room["players"][websocket] = mapped_name
-                    room["player_names"][mapped_name] = websocket
-                    room["player_ids"][websocket] = existing_player_id
-                else:
-                    # fresh player id
-                    player_id = str(uuid.uuid4())
-                    room["players"][websocket] = player_name
-                    room["player_names"][player_name] = websocket
-                    room["player_ids"][websocket] = player_id
-                    room["id_to_name"][player_id] = player_name
-                # final player_id
-                player_id_final = room["player_ids"][websocket]
-                # Send current state to the new player (authoritative snapshot)
+                # Prevent duplicate names in same room
+                if player_name in room["player_names"]:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Name already taken in this room"
+                    })
+                    continue
+                room["players"][websocket] = player_name
+                room["player_names"][player_name] = websocket
+                # Add to turn order if game not started
+                if room["phase"] == "waiting":
+                    room["turn_order"].append(player_name)
+                # Derive current player name
+                current_player = None
+                if room["turn_order"]:
+                    # If phase waiting and this is first player, keep waiting until at least 2? For now allow start with 1
+                    current_player = room["turn_order"][room["turn_index"]]
+                # Send current state including turn info to new player
                 await websocket.send_json({
                     "type": "state",
                     "numbers_drawn": list(room["numbers_drawn"]),
                     "winner": room["winner"],
                     "players": list(room["player_names"].keys()),
-                    "round": room["round"],
-                    "player_id": player_id_final
+                    "turn_order": room["turn_order"],
+                    "current_player": current_player,
+                    "phase": room["phase"]
                 })
-                # Notify others of new player (exclude self)
+                # Notify others
                 for client in list(room["players"].keys()):
                     if client is websocket:
                         continue
                     try:
                         await client.send_json({
                             "type": "player_joined",
-                            "player": room["players"][websocket],
-                            "players": list(room["player_names"].keys())
+                            "player": player_name,
+                            "players": list(room["player_names"].keys()),
+                            "turn_order": room["turn_order"],
+                            "current_player": current_player,
+                            "phase": room["phase"]
                         })
                     except Exception as e:
                         print(f"Error notifying player join: {e}")
 
             elif msg_type == "mark_number":
+                if room["winner"]:
+                    continue  # ignore moves after game finished
                 number = data.get("number")
                 if number is None:
                     continue
+                player_name = room["players"].get(websocket)
+                if not player_name:
+                    continue
+                # Auto-start game on first valid mark
+                if room["phase"] == "waiting":
+                    room["phase"] = "active"
+                # Enforce turn
+                if room["turn_order"]:
+                    expected = room["turn_order"][room["turn_index"]]
+                    if player_name != expected:
+                        # Send invalid move to this player only
+                        try:
+                            await websocket.send_json({
+                                "type": "invalid_move",
+                                "reason": "Not your turn",
+                                "current_player": expected
+                            })
+                        except Exception as e:
+                            print(f"Error sending invalid_move: {e}")
+                        continue
+                # Reject duplicate number
+                if number in room["numbers_drawn"]:
+                    try:
+                        await websocket.send_json({
+                            "type": "invalid_move",
+                            "reason": "Number already drawn",
+                            "current_player": room["turn_order"][room["turn_index"]] if room["turn_order"] else None
+                        })
+                    except Exception:
+                        pass
+                    continue
                 room["numbers_drawn"].add(number)
-                # broadcast inside room
+                # Broadcast mark
                 for client in list(room["players"].keys()):
                     try:
                         await client.send_json({
                             "type": "mark_number",
                             "number": number,
-                            "marked_by": room["players"][websocket]
+                            "marked_by": player_name
                         })
                     except Exception as e:
                         print(f"Error sending mark_number: {e}")
+                # Advance turn if turn order exists
+                if room["turn_order"] and room["phase"] == "active" and not room["winner"]:
+                    room["turn_index"] = (room["turn_index"] + 1) % len(room["turn_order"])
+                    next_player = room["turn_order"][room["turn_index"]]
+                    for client in list(room["players"].keys()):
+                        try:
+                            await client.send_json({
+                                "type": "next_turn",
+                                "current_player": next_player,
+                                "turn_order": room["turn_order"]
+                            })
+                        except Exception as e:
+                            print(f"Error sending next_turn: {e}")
 
             elif msg_type == "winner":
                 if not room["winner"]:
                     room["winner"] = room["players"].get(websocket, "Unknown")
+                    room["phase"] = "finished"
                 for client in list(room["players"].keys()):
                     try:
                         await client.send_json({
                             "type": "winner",
-                            "winner": room["winner"]
+                            "winner": room["winner"],
+                            "phase": room["phase"]
                         })
                     except Exception as e:
                         print(f"Error sending winner: {e}")
@@ -164,12 +210,15 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
             elif msg_type == "reset":
                 room["numbers_drawn"].clear()
                 room["winner"] = None
-                room["round"] += 1
+                room["turn_index"] = 0
+                room["phase"] = "waiting"
                 for client in list(room["players"].keys()):
                     try:
                         await client.send_json({
                             "type": "reset",
-                            "round": room["round"]
+                            "turn_order": room["turn_order"],
+                            "current_player": room["turn_order"][0] if room["turn_order"] else None,
+                            "phase": room["phase"]
                         })
                     except Exception as e:
                         print(f"Error sending reset: {e}")
@@ -181,19 +230,31 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
         player_name = room["players"].pop(websocket, "Unknown")
         if player_name in room["player_names"]:
             del room["player_names"][player_name]
-        # remove player id mapping
-        pid = room["player_ids"].pop(websocket, None)
-        if pid and pid in room["id_to_name"] and room["id_to_name"][pid] == player_name:
-            # keep id_to_name to allow reconnection? choose policy: retain mapping for some time.
-            # For now we retain mapping so player can reconnect with same player_id.
-            pass
         # notify remaining players
+        # Remove from turn order
+        if player_name in room.get("turn_order", []):
+            idx = room["turn_order"].index(player_name)
+            room["turn_order"].remove(player_name)
+            # Adjust turn_index if needed
+            if room["turn_index"] >= len(room["turn_order"]):
+                room["turn_index"] = 0
+            # If the leaving player was the current player and game active, advance turn
+            if room["phase"] == "active" and room["turn_order"]:
+                current_player = room["turn_order"][room["turn_index"]]
+            else:
+                current_player = room["turn_order"][room["turn_index"]] if room["turn_order"] else None
+        else:
+            current_player = room["turn_order"][room["turn_index"]] if room["turn_order"] else None
+
         for client in list(room["players"].keys()):
             try:
                 await client.send_json({
                     "type": "player_left",
                     "player": player_name,
-                    "players": list(room["player_names"].keys())
+                    "players": list(room["player_names"].keys()),
+                    "turn_order": room.get("turn_order", []),
+                    "current_player": current_player,
+                    "phase": room.get("phase")
                 })
             except Exception as e:
                 print(f"Error notifying player leave: {e}")
@@ -207,9 +268,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
         player_name = room["players"].pop(websocket, "Unknown")
         if player_name in room["player_names"]:
             del room["player_names"][player_name]
-        pid = room["player_ids"].pop(websocket, None)
-        if pid and pid in room["id_to_name"] and room["id_to_name"][pid] == player_name:
-            pass
         if not room["players"]:
             del rooms[room_id]
             print(f"Room {room_id} deleted (empty after error)")

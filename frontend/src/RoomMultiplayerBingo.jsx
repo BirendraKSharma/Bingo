@@ -59,6 +59,11 @@ export default function RoomMultiplayerBingo() {
   const [status, setStatus] = React.useState('idle'); // idle|connecting|connected|error|disconnected
   const [errorMsg, setErrorMsg] = React.useState('');
   const [hasInteracted, setHasInteracted] = React.useState(false);
+  // Turn-based state
+  const [turnOrder, setTurnOrder] = React.useState([]); // array of player names
+  const [currentPlayer, setCurrentPlayer] = React.useState(null);
+  const [phase, setPhase] = React.useState('waiting'); // waiting | active | finished
+  const [lastInvalid, setLastInvalid] = React.useState(null); // { reason, at }
 
   const isWinner = winner === playerName;
 
@@ -117,18 +122,28 @@ export default function RoomMultiplayerBingo() {
             if (data.players) setPlayers(data.players);
             if (data.numbers_drawn) setNumbersDrawn(new Set(data.numbers_drawn));
             if (data.winner) setWinner(data.winner);
+            if (data.turn_order) setTurnOrder(data.turn_order);
+            if (data.current_player !== undefined) setCurrentPlayer(data.current_player);
+            if (data.phase) setPhase(data.phase);
             break;
           case 'player_joined':
             if (data.players) setPlayers(data.players);
+            if (data.turn_order) setTurnOrder(data.turn_order);
+            if (data.current_player !== undefined) setCurrentPlayer(data.current_player);
+            if (data.phase) setPhase(data.phase);
             break;
           case 'player_left':
             if (data.players) setPlayers(data.players);
+            if (data.turn_order) setTurnOrder(data.turn_order);
+            if (data.current_player !== undefined) setCurrentPlayer(data.current_player);
+            if (data.phase) setPhase(data.phase);
             break;
           case 'mark_number':
             setNumbersDrawn(prev => new Set(prev).add(data.number));
             break;
           case 'winner':
             setWinner(data.winner);
+            if (data.phase) setPhase(data.phase);
             break;
           case 'reset':
             setNumbersDrawn(new Set());
@@ -137,6 +152,17 @@ export default function RoomMultiplayerBingo() {
               const base = generateDeterministicCard(roomId, playerName);
               setCard(base);
             }
+            if (data.turn_order) setTurnOrder(data.turn_order);
+            if (data.current_player !== undefined) setCurrentPlayer(data.current_player);
+            if (data.phase) setPhase(data.phase);
+            break;
+          case 'next_turn':
+            if (data.turn_order) setTurnOrder(data.turn_order);
+            if (data.current_player !== undefined) setCurrentPlayer(data.current_player);
+            break;
+          case 'invalid_move':
+            setLastInvalid({ reason: data.reason, at: Date.now(), current: data.current_player });
+            if (data.current_player !== undefined) setCurrentPlayer(data.current_player);
             break;
           case 'heartbeat_ack':
           default:
@@ -195,7 +221,11 @@ export default function RoomMultiplayerBingo() {
   }
 
   function holdCell(id) {
-    if (winner) return; // game over
+    if (winner || phase === 'finished') return;
+    if (currentPlayer && currentPlayer !== playerName) {
+      // Not this player's turn; ignore locally (server will also reject if sent)
+      return;
+    }
     const cell = card.find(c => c.id === id);
     if (!cell || numbersDrawn.has(cell.value)) return;
 
@@ -242,10 +272,19 @@ export default function RoomMultiplayerBingo() {
     setWinner(null);
     const base = generateDeterministicCard(roomId, playerName);
     setCard(base);
+    setPhase('waiting');
+    setCurrentPlayer(turnOrder[0] || null);
   }
 
   const cardElements = card.map(cell => (
-    <Bingo key={cell.id} value={cell.value} isHeld={numbersDrawn.has(cell.value)} hold={() => holdCell(cell.id)} id={cell.id} />
+    <Bingo
+      key={cell.id}
+      value={cell.value}
+      isHeld={numbersDrawn.has(cell.value)}
+      hold={() => holdCell(cell.id)}
+      id={cell.id}
+      disabled={!!currentPlayer && currentPlayer !== playerName || phase === 'finished'}
+    />
   ));
 
   if (!playerName) {
@@ -292,10 +331,15 @@ export default function RoomMultiplayerBingo() {
       <h1 className="title">Bingo Room {roomId}</h1>
       <div className="status-bar" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
         <span>Player: {playerName}</span>
-        <span>Status: {status}</span>
+        <span>Conn: {status}</span>
+        <span>Phase: {phase}</span>
+        <span>Turn: {currentPlayer || '-'}</span>
         <span>Players: {players.join(', ') || '...'}</span>
         {winner && <span className="winner">Winner: {winner}</span>}
       </div>
+      {lastInvalid && Date.now() - lastInvalid.at < 4000 && (
+        <div style={{ color: 'tomato', fontSize: '0.85rem' }}>⚠ {lastInvalid.reason} (Current: {lastInvalid.current || 'N/A'})</div>
+      )}
       <div className='bingo-card'>
         {cardElements}
       </div>
