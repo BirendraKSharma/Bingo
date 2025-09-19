@@ -289,64 +289,87 @@ export default function RoomMultiplayerBingo() {
 
   if (!playerName) {
     return (
-      <main>
-        <h1 className="title">Enter Name</h1>
-        <input
-          className="name-input"
-          value={nameInput}
-          onChange={e => setNameInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && nameInput.trim()) setPlayerName(nameInput.trim()); }}
-          placeholder="Your name"
-        />
-        <button disabled={!nameInput.trim()} onClick={() => setPlayerName(nameInput.trim())}>Continue</button>
+      <main className="app-shell centered">
+        <div className="panel panel-elevated intro-panel">
+          <h1 className="app-title">Multiplayer Bingo</h1>
+          <p className="tagline">Pick a name to get started</p>
+          <div className="form-stack">
+            <input
+              className="input text"
+              value={nameInput}
+              onChange={e => setNameInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && nameInput.trim()) setPlayerName(nameInput.trim()); }}
+              placeholder="Your name"
+              autoFocus
+            />
+            <button className="btn primary" disabled={!nameInput.trim()} onClick={() => setPlayerName(nameInput.trim())}>Continue</button>
+          </div>
+        </div>
       </main>
     );
   }
 
   if (!roomId) {
     return (
-      <main>
-        <h1 className="title">Room Lobby</h1>
-        <p>Player: {playerName}</p>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <input
-            value={roomInput}
-            onChange={e => setRoomInput(e.target.value.toUpperCase())}
-            placeholder="ROOM CODE"
-            maxLength={8}
-            style={{ textTransform: 'uppercase' }}
-          />
-          <button onClick={handleJoinRoom} disabled={!roomInput.trim()}>Join</button>
-          <button onClick={handleCreateRoom} disabled={creatingRoom}>{creatingRoom ? 'Creating...' : 'Create Room'}</button>
+      <main className="app-shell centered">
+        <div className="panel panel-elevated lobby-panel">
+          <h1 className="app-title">Room Lobby</h1>
+          <p className="player-id">Player: <strong>{playerName}</strong></p>
+          <div className="form-grid room-form">
+            <input
+              className="input code"
+              value={roomInput}
+              onChange={e => setRoomInput(e.target.value.toUpperCase())}
+              placeholder="ROOM CODE"
+              maxLength={8}
+              style={{ textTransform: 'uppercase' }}
+            />
+            <button className="btn secondary" onClick={handleJoinRoom} disabled={!roomInput.trim()}>Join</button>
+            <button className="btn primary" onClick={handleCreateRoom} disabled={creatingRoom}>{creatingRoom ? 'Creating...' : 'Create Room'}</button>
+          </div>
+          {errorMsg && <p className="error inline-error">{errorMsg}</p>}
+          <p className="hint">Room codes are 5 random characters when created.</p>
         </div>
-        {errorMsg && <p className="error">{errorMsg}</p>}
-        <p style={{ fontSize: '0.85rem', marginTop: '1rem' }}>Room codes are 5 random characters when created.</p>
       </main>
     );
   }
 
   return (
-    <main>
+    <main className="app-shell game-shell">
       {isWinner && <Confetti />}
-      <h1 className="title">Bingo Room {roomId}</h1>
-      <div className="status-bar" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-        <span>Player: {playerName}</span>
-        <span>Conn: {status}</span>
-        <span>Phase: {phase}</span>
-        <span>Turn: {currentPlayer || '-'}</span>
-        <span>Players: {players.join(', ') || '...'}</span>
-        {winner && <span className="winner">Winner: {winner}</span>}
-      </div>
-      {lastInvalid && Date.now() - lastInvalid.at < 4000 && (
-        <div style={{ color: 'tomato', fontSize: '0.85rem' }}>⚠ {lastInvalid.reason} (Current: {lastInvalid.current || 'N/A'})</div>
-      )}
-      <div className='bingo-card'>
-        {cardElements}
-      </div>
-      <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
-        <button onClick={handleReset} disabled={status !== 'connected'}>{winner ? 'New Game' : 'Reset'}</button>
-  <button onClick={() => { sessionStorage.removeItem('roomId'); setRoomId(''); setRoomInput(''); }}>Leave Room</button>
-      </div>
+      <header className="game-header">
+        <h1 className="room-title">Bingo Room <span className="room-code">{roomId}</span></h1>
+        <div className="meta-line">
+          <span className="badge player">{playerName}</span>
+          <span className={`badge conn ${status}`}>{status}</span>
+          <span className={`badge phase phase-${phase}`}>{phase}</span>
+          <span className="badge turn">Turn: {currentPlayer || '-'}</span>
+        </div>
+      </header>
+      <section className="side-panel players-panel">
+        <h2 className="subheading">Players</h2>
+        <ul className="player-list">
+          {players.map(p => (
+            <li key={p} className={p === currentPlayer ? 'current' : ''}>
+              <span>{p}</span>
+              {p === currentPlayer && <span className="turn-indicator" aria-label="Current turn">▶</span>}
+            </li>
+          ))}
+        </ul>
+        {winner && <div className="winner-banner">🏆 {winner} wins!</div>}
+        {lastInvalid && Date.now() - lastInvalid.at < 4000 && (
+          <div className="inline-warning">⚠ {lastInvalid.reason}</div>
+        )}
+      </section>
+      <section className='board-wrapper'>
+        <div className='bingo-card modern-grid'>
+          {cardElements}
+        </div>
+      </section>
+      <footer className="controls-bar">
+        <button className="btn ghost" onClick={handleReset} disabled={status !== 'connected'}>{winner ? 'New Game' : 'Reset'}</button>
+        <button className="btn danger" onClick={() => { sessionStorage.removeItem('roomId'); setRoomId(''); setRoomInput(''); }}>Leave Room</button>
+      </footer>
     </main>
   );
 }

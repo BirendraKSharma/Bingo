@@ -1,19 +1,18 @@
-import React from "react"
+import React from 'react';
 
-export default function Bingo(props) {
-    const disabled = props.disabled;
-    const styles = {
-        backgroundColor: props.isHeld ? "#59E391" : "white",
-        opacity: disabled && !props.isHeld ? 0.5 : 1,
-        cursor: disabled ? 'not-allowed' : 'pointer'
-    };
+export default function Bingo({ value, isHeld, hold, disabled }) {
+    const className = [
+        'bingo-cell',
+        isHeld ? 'held' : '',
+        disabled ? 'disabled' : ''
+    ].filter(Boolean).join(' ');
     return (
         <button
-            style={styles}
-            onClick={disabled ? undefined : props.hold}
-            aria-pressed={props.isHeld}
+            className={className}
+            onClick={disabled ? undefined : hold}
+            aria-pressed={isHeld}
             disabled={disabled}
-            aria-label={`Cell with value ${props.value}, ${props.isHeld ? 'held' : 'not held'}${disabled ? ', disabled' : ''}`}
-        >{props.value}</button>
+            aria-label={`Cell with value ${value}, ${isHeld ? 'held' : 'not held'}${disabled ? ', disabled' : ''}`}
+        >{value}</button>
     );
 }
