@@ -50,7 +50,8 @@ async def create_room():
         "players": {},
         "player_names": {},
         "numbers_drawn": set(),
-        "winner": None,
+        "winner": None,            # first winner (legacy single value)
+        "winners": [],             # list of winners (>=1); if length >1 treat as draw
         # Turn-based additions
         "turn_order": [],        # list[str]
         "turn_index": 0,         # int pointer into turn_order
@@ -67,7 +68,8 @@ async def get_room_state(room_id: str):
         "room_id": room_id,
         "players": list(room["player_names"].keys()),
         "numbers_drawn": list(room["numbers_drawn"]),
-        "winner": room["winner"]
+        "winner": room["winner"],
+        "winners": room.get("winners", [])
     }
 
 @app.websocket("/ws/{room_id}")
@@ -194,22 +196,38 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                             print(f"Error sending next_turn: {e}")
 
             elif msg_type == "winner":
+                player_name = room["players"].get(websocket, "Unknown")
+                # Initialize winners list if absent
+                if "winners" not in room:
+                    room["winners"] = []
+                # If no winner yet, set first winner
                 if not room["winner"]:
-                    room["winner"] = room["players"].get(websocket, "Unknown")
+                    room["winner"] = player_name
+                    room["winners"].append(player_name)
                     room["phase"] = "finished"
+                else:
+                    # If another distinct player also claims winner, treat as draw
+                    if player_name not in room["winners"]:
+                        room["winners"].append(player_name)
+                        # winner value remains first winner for backward compatibility
+                is_draw = len(room.get("winners", [])) > 1
+                payload = {
+                    "type": "winner",
+                    "winner": room["winner"],
+                    "winners": room.get("winners", []),
+                    "draw": is_draw,
+                    "phase": room["phase"]
+                }
                 for client in list(room["players"].keys()):
                     try:
-                        await client.send_json({
-                            "type": "winner",
-                            "winner": room["winner"],
-                            "phase": room["phase"]
-                        })
+                        await client.send_json(payload)
                     except Exception as e:
                         print(f"Error sending winner: {e}")
 
             elif msg_type == "reset":
                 room["numbers_drawn"].clear()
                 room["winner"] = None
+                room["winners"] = []
                 room["turn_index"] = 0
                 room["phase"] = "waiting"
                 for client in list(room["players"].keys()):

@@ -95,6 +95,8 @@ export default function RoomMultiplayerBingo() {
   const [card, setCard] = React.useState([]); // will be set deterministically once room & player known
   const [numbersDrawn, setNumbersDrawn] = React.useState(new Set());
   const [winner, setWinner] = React.useState(null);
+  const [winners, setWinners] = React.useState([]); // multi-winner support
+  const [isDraw, setIsDraw] = React.useState(false);
   const [status, setStatus] = React.useState('idle'); // idle|connecting|connected|error|disconnected
   const [errorMsg, setErrorMsg] = React.useState('');
   const [hasInteracted, setHasInteracted] = React.useState(false);
@@ -182,11 +184,15 @@ export default function RoomMultiplayerBingo() {
             break;
           case 'winner':
             setWinner(data.winner);
+            if (Array.isArray(data.winners)) setWinners(data.winners);
+            setIsDraw(!!data.draw && Array.isArray(data.winners) && data.winners.length > 1);
             if (data.phase) setPhase(data.phase);
             break;
           case 'reset':
             setNumbersDrawn(new Set());
             setWinner(null);
+            setWinners([]);
+            setIsDraw(false);
             {
               const base = generateDeterministicCard(roomId, playerName);
               setCard(base);
@@ -273,7 +279,7 @@ export default function RoomMultiplayerBingo() {
   }
 
   function holdCell(id) {
-    if (winner || phase === 'finished') return;
+  if (winner || isDraw || phase === 'finished') return;
     if (currentPlayer && currentPlayer !== playerName) {
       // Not this player's turn; ignore locally (server will also reject if sent)
       return;
@@ -290,7 +296,7 @@ export default function RoomMultiplayerBingo() {
 
     // After marking, check local board for win (client-side convenience) - actual winner broadcast authoritative
     const updatedBoard = card.map(c => c.id === id ? { ...c, isHeld: true } : (numbersDrawn.has(c.value) ? { ...c, isHeld: true } : c));
-    if (checkTotalBingos(updatedBoard) && !winner) {
+    if (checkTotalBingos(updatedBoard) && !winner && !isDraw) {
       if (socketRef.current?.readyState === 1) {
         socketRef.current.send(JSON.stringify({ type: 'winner' }));
       }
@@ -321,7 +327,9 @@ export default function RoomMultiplayerBingo() {
       socketRef.current.send(JSON.stringify({ type: 'reset' }));
     }
     setNumbersDrawn(new Set());
-    setWinner(null);
+  setWinner(null);
+  setWinners([]);
+  setIsDraw(false);
     const base = generateDeterministicCard(roomId, playerName);
     setCard(base);
     setPhase('waiting');
@@ -388,7 +396,7 @@ export default function RoomMultiplayerBingo() {
 
   return (
     <main className="app-shell game-shell">
-      {isWinner && <Confetti />}
+  {(isWinner || isDraw) && <Confetti />}
       <header className="game-header">
         <h1 className="room-title">Bingo Room <span className="room-code">{roomId}</span></h1>
         <div className="meta-line">
@@ -408,7 +416,12 @@ export default function RoomMultiplayerBingo() {
             </li>
           ))}
         </ul>
-        {winner && <div className="winner-banner">🏆 {winner} wins!</div>}
+        {isDraw && winners.length > 1 && (
+          <div className="winner-banner">🤝 Draw: {winners.join(' & ')}</div>
+        )}
+        {!isDraw && winner && (
+          <div className="winner-banner">🏆 {winner} wins!</div>
+        )}
         {lastInvalid && Date.now() - lastInvalid.at < 4000 && (
           <div className="inline-warning">⚠ {lastInvalid.reason}</div>
         )}
