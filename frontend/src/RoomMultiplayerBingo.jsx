@@ -26,7 +26,16 @@ try {
   }
 } catch (_) { /* no-op (SSR safety) */ }
 
-const RAW_API_BASE = import.meta.env.VITE_API_URL || derivedApiBase || 'http://localhost:8000';
+let RAW_API_BASE = import.meta.env.VITE_API_URL || derivedApiBase || 'http://localhost:8000';
+// If we are on an https page but RAW_API_BASE is http pointing to same hostname (or likely forgot https), attempt auto-upgrade.
+if (typeof window !== 'undefined' && window.location.protocol === 'https:' && /^http:\/\//i.test(RAW_API_BASE)) {
+  try {
+    const apiUrl = new URL(RAW_API_BASE);
+    // If host matches current host OR user is clearly hitting a remote host that also supports https, upgrade protocol.
+    // This is heuristic; backend must actually have TLS (Render provides https by default).
+    RAW_API_BASE = 'https://' + apiUrl.host + apiUrl.pathname.replace(/\/$/, '');
+  } catch (_) { /* ignore parse errors */ }
+}
 // Normalize (strip trailing slash)
 const API_BASE = RAW_API_BASE.replace(/\/$/, '');
 
@@ -246,7 +255,7 @@ export default function RoomMultiplayerBingo() {
         let msg = err.message || 'Network error';
         if (msg === 'Failed to fetch') {
           if (typeof window !== 'undefined' && window.location?.protocol === 'https:' && API_BASE.startsWith('http://')) {
-            msg = 'Blocked mixed content: Frontend is HTTPS but API_BASE is HTTP. Use an https:// API URL and wss:// for WebSocket.';
+            msg = 'Mixed content blocked: auto-upgrade failed. Set VITE_API_URL to https:// (current: ' + API_BASE + ')';
           } else if (API_BASE.includes('localhost')) {
             msg = 'Frontend is deployed but still pointing to localhost. Set VITE_API_URL & VITE_WS_URL_BASE at build time.';
           } else {
