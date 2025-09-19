@@ -13,8 +13,38 @@ Features:
 - Broadcasts mark_number, winner, reset within room
 */
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const WS_BASE = import.meta.env.VITE_WS_URL_BASE || 'ws://localhost:8000/ws'; // final URL = `${WS_BASE}/${roomId}`
+// ---------------------------------------------------------------------------
+// Endpoint configuration (derives sensible defaults in production)
+// ---------------------------------------------------------------------------
+// If Vercel build did not inject env vars, attempt to derive from window.location.
+// This allows deploying frontend + backend under same origin (via reverse proxy) OR
+// different origins when explicitly configured.
+let derivedApiBase;
+try {
+  if (typeof window !== 'undefined') {
+    derivedApiBase = window.location.origin.replace(/\/$/, '');
+  }
+} catch (_) { /* no-op (SSR safety) */ }
+
+const RAW_API_BASE = import.meta.env.VITE_API_URL || derivedApiBase || 'http://localhost:8000';
+// Normalize (strip trailing slash)
+const API_BASE = RAW_API_BASE.replace(/\/$/, '');
+
+// Derive WS base if not explicitly provided. Replace protocol (http->ws, https->wss) and append /ws
+function deriveWsBase(apiBase) {
+  if (!apiBase) return 'ws://localhost:8000/ws';
+  if (apiBase.startsWith('https://')) return apiBase.replace(/^https:\/\//, 'wss://') + '/ws';
+  if (apiBase.startsWith('http://')) return apiBase.replace(/^http:\/\//, 'ws://') + '/ws';
+  // Already something custom (maybe wss://) – assume caller gave full base; ensure /ws suffix
+  return apiBase.endsWith('/ws') ? apiBase : apiBase + '/ws';
+}
+
+const WS_BASE = (import.meta.env.VITE_WS_URL_BASE || deriveWsBase(API_BASE)).replace(/\/$/, ''); // final URL = `${WS_BASE}/${roomId}`
+if (typeof window !== 'undefined' && !import.meta.env.PROD) {
+  // Helpful console diagnostics during development
+  // eslint-disable-next-line no-console
+  console.log('[Config] API_BASE:', API_BASE, 'WS_BASE:', WS_BASE);
+}
 
 // --- Deterministic board generation (seeded by roomId + playerName) ---
 function hashString(str) {
@@ -211,7 +241,20 @@ export default function RoomMultiplayerBingo() {
         setRoomId(data.room_id);
         setRoomInput(data.room_id);
       })
-      .catch(err => setErrorMsg(err.message))
+      .catch(err => {
+        // Improve error feedback for common deployment misconfigurations
+        let msg = err.message || 'Network error';
+        if (msg === 'Failed to fetch') {
+          if (typeof window !== 'undefined' && window.location?.protocol === 'https:' && API_BASE.startsWith('http://')) {
+            msg = 'Blocked mixed content: Frontend is HTTPS but API_BASE is HTTP. Use an https:// API URL and wss:// for WebSocket.';
+          } else if (API_BASE.includes('localhost')) {
+            msg = 'Frontend is deployed but still pointing to localhost. Set VITE_API_URL & VITE_WS_URL_BASE at build time.';
+          } else {
+            msg += ' (network / CORS / DNS). Check browser console for details.';
+          }
+        }
+        setErrorMsg(msg);
+      })
       .finally(() => setCreatingRoom(false));
   }
 
